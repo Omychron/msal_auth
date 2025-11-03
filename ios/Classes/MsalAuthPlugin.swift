@@ -285,45 +285,63 @@ public class MsalAuthPlugin: NSObject, FlutterPlugin {
 
         var account: MSALAccount!
 
-        if MsalAuth.pcaType == PublicClientApplicationType.single {
-            account = getCurrentAccount()
-        } else {
-            account = getAccount(identifier: identifier!)
+        func continueWithAccount(_ account: MSALAccount) {
+            let silentParams = MSALSilentTokenParameters(
+                scopes: scopes, account: account)
+
+            if let authority = authority {
+                do {
+                    let msalAuthority = try getMsalAuthority(authority: authority)
+                    silentParams.authority = msalAuthority
+                } catch let error as NSError {
+                    self.setMsalError(error: error, result: result)
+                    return
+                }
+            }
+
+            pca.acquireTokenSilent(
+                with: silentParams,
+                completionBlock: { (msalResult, error) in
+
+                    guard let msalResult = msalResult else {
+
+                        guard let error = error as NSError? else { return }
+
+                        self.setMsalError(error: error, result: result)
+
+                        return
+                    }
+
+                    result(self.getAuthResult(msalResult))
+                })
         }
+
+        if MsalAuth.pcaType == PublicClientApplicationType.single {
+            pca.getCurrentAccount(with: MSALParameters()) {
+                current, _, error in
+                if let current {
+                    continueWithAccount(current)
+                    return
+                }
+
+                if let error = error as NSError? {
+                    self.setMsalError(error: error, result: result)
+                    return
+                }
+
+                self.setNoCurrentAccountError(result: result)
+            }
+            return
+        }
+
+        account = getAccount(identifier: identifier!)
 
         guard let account else {
             setNoCurrentAccountError(result: result)
             return
         }
 
-        let silentParams = MSALSilentTokenParameters(
-            scopes: scopes, account: account)
-        
-        if let authority = authority {
-            do {
-                let msalAuthority = try getMsalAuthority(authority: authority)
-                silentParams.authority = msalAuthority
-            } catch let error as NSError {
-                setMsalError(error: error, result: result)
-                return
-            }
-        }
-
-        pca.acquireTokenSilent(
-            with: silentParams,
-            completionBlock: { (msalResult, error) in
-
-                guard let msalResult = msalResult else {
-
-                    guard let error = error as NSError? else { return }
-
-                    self.setMsalError(error: error, result: result)
-
-                    return
-                }
-
-                result(self.getAuthResult(msalResult))
-            })
+        continueWithAccount(account)
     }
 
     /// Returns current account. used with single account mode.
